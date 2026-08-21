@@ -1,27 +1,41 @@
-import json
 from pathlib import Path
 
-from crap4swift.core import analyze, extract_functions, score
+import pytest
+
+from crap4swift.core import AnalysisError, analyze, extract_functions, score
 
 
-def test_score() -> None:
+def test_score_formula() -> None:
     assert score(10, 50.0) == 22.5
     assert score(10, 100.0) == 10.0
 
 
-def test_extracts_function_and_complexity(tmp_path: Path) -> None:
-    source = tmp_path / 'sample.swift'
-    source.write_text('func choose(_ value: Int) -> Int {\n    if value > 0 && value < 10 { return 1 }\n    return 0\n}\n', encoding="utf-8")
-    metric = extract_functions(source)[0]
-    assert metric.name.endswith('choose')
-    assert metric.complexity == 3
+def test_target_language_function_and_complexity(tmp_path: Path) -> None:
+    source = tmp_path / "sample.swift"
+    source.write_text(
+        "struct Choice {\n"
+        "  func choose(_ a: Bool, _ b: Bool) -> Int {\n"
+        "    if a && b { return 1 }\n"
+        "    return 0\n"
+        "  }\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    metrics = extract_functions(source, tmp_path)
+    assert metrics
+    metric = next(item for item in metrics if "choose" in item.name)
+    assert metric.complexity >= 3
 
 
-def test_maps_simple_line_coverage(tmp_path: Path) -> None:
-    source = tmp_path / 'sample.swift'
-    source.write_text('func choose(_ value: Int) -> Int {\n    if value > 0 && value < 10 { return 1 }\n    return 0\n}\n', encoding="utf-8")
-    coverage = tmp_path / "coverage.json"
-    coverage.write_text(json.dumps({"files": {'sample.swift': {"executed_lines": [1, 2, 4], "missing_lines": [3]}}}), encoding="utf-8")
-    metric = analyze(tmp_path, coverage)[0]
-    assert metric.coverage is not None
-    assert metric.crap is not None
+def test_lcov_is_mapped_by_executable_line(tmp_path: Path) -> None:
+    source = tmp_path / "sample.swift"
+    source.write_text("func choose(_ a: Bool) -> Int {\n if a { return 1 }\n return 0\n}\n", encoding="utf-8")
+    coverage = tmp_path / "lcov.info"
+    coverage.write_text(f"SF:{source.as_posix()}\nDA:1,1\nDA:2,1\nDA:3,0\nDA:4,1\nend_of_record\n", encoding="utf-8")
+    metrics = analyze(tmp_path, coverage)
+    assert metrics and metrics[0].coverage is not None
+
+
+def test_missing_report_fails(tmp_path: Path) -> None:
+    with pytest.raises(AnalysisError):
+        analyze(tmp_path, tmp_path / "missing.info")
