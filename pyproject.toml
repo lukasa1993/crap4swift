@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "crap4swift"
+version = "0.1.0"
+description = "CRAP metric for Swift projects"
+readme = "README.md"
+requires-python = ">=3.11"
+license = {file = "LICENSE"}
+authors = [{name = "Luka Dodelia"}]
+keywords = ["swarmforge", "quality", "testing"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: 3",
+]
+
+[project.scripts]
+crap4swift = "crap4swift.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
