@@ -1,22 +1,22 @@
-name: Verify and publish production hardening
+name: Generate verified production source
 
 on:
   pull_request:
     branches: [main]
+  workflow_dispatch:
 
 permissions:
   contents: write
-  pull-requests: write
 
 jobs:
-  verify-and-merge:
-    if: ${{ github.head_ref == 'production-hardening-v4' }}
+  generate:
+    if: ${{ github.event_name == 'workflow_dispatch' || startsWith(github.head_ref, 'production-hardening-') }}
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: production-hardening-v4
+          ref: ${{ github.head_ref || github.ref_name }}
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
@@ -28,10 +28,12 @@ jobs:
           curl --fail --location --retry 3 "$base/_quality_tool_generator_data_1.py" -o /tmp/quality-tool-generator/_quality_tool_generator_data_1.py
           curl --fail --location --retry 3 "$base/_quality_tool_generator_data_2.py" -o /tmp/quality-tool-generator/_quality_tool_generator_data_2.py
           curl --fail --location --retry 3 "$base/_quality_tool_generator_data_3.py" -o /tmp/quality-tool-generator/_quality_tool_generator_data_3.py
-      - name: Generate the hardened repository
-        run: python /tmp/quality-tool-generator/quality_tool_generator.py --repo "${GITHUB_REPOSITORY#*/}" --output .
-      - name: Build and test the generated package
+      - name: Generate and verify the package
         run: |
+          rm -rf /tmp/generated-repo
+          mkdir -p /tmp/generated-repo
+          python /tmp/quality-tool-generator/quality_tool_generator.py --repo "${GITHUB_REPOSITORY#*/}" --output /tmp/generated-repo
+          cd /tmp/generated-repo
           python -m pip install --upgrade pip build
           python -m build
           python -m pip install --force-reinstall dist/*.whl pytest
@@ -40,16 +42,22 @@ jobs:
           "${GITHUB_REPOSITORY#*/}" --help
       - name: Commit the verified source tree
         run: |
+          rm -rf /tmp/publish-repo
+          mkdir -p /tmp/publish-repo
+          python /tmp/quality-tool-generator/quality_tool_generator.py --repo "${GITHUB_REPOSITORY#*/}" --output /tmp/publish-repo
+          cp /tmp/publish-repo/.github/workflows/ci.yml generated-ci.yml
+          rsync -a --delete \
+            --exclude='.git/' \
+            --exclude='.github/workflows/' \
+            --exclude='generated-ci.yml' \
+            /tmp/publish-repo/ ./
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git rm -rf --ignore-unmatch package.json package-lock.json tsconfig.json src/core.ts src/index.ts src/node-shims.d.ts test
-          git add -- .gitignore .github/workflows/ci.yml README.md SKILL.md pyproject.toml src tests
-          git rm -- .github/workflows/bootstrap-production.yml
-          git commit -m "Harden crap4swift for production"
-          git push origin HEAD:production-hardening-v4
-      - name: Merge the verified pull request
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          gh pr ready "${{ github.event.pull_request.number }}"
-          gh pr merge "${{ github.event.pull_request.number }}" --merge --delete-branch
+          git add -A
+          if git diff --cached --quiet; then
+            echo "The verified source tree is already current."
+          else
+            git commit -m "Harden ${GITHUB_REPOSITORY#*/} for production"
+            branch="${GITHUB_HEAD_REF:-${GITHUB_REF_NAME}}"
+            git push origin "HEAD:${branch}"
+          fi
